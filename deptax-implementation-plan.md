@@ -1,5 +1,7 @@
 # DepTax VSCode Extension — Implementation Plan
 
+> **Superseded:** the scoring model (Φ, U, DepTax Score) and the pipeline details in this document were replaced by model v2. See `DEPTAX_FULL_SPEC.md` §2–§4 and §15.
+
 ## Top-Level Overview
 
 **Goal:** Build DepTax as a fully functional VSCode extension that audits third-party dependencies across Node.js/TypeScript, Flutter/Dart, and Python projects. On every file save, the extension scans the workspace, computes DepTax scores, and surfaces findings via inline diagnostics, a TreeView panel, a WebView report panel, and a status bar badge. The Eviction Engine (automated inlining) is explicitly **out of scope** for this implementation.

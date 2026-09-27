@@ -1,95 +1,77 @@
 import * as path from 'path';
 import { detectAdapters } from '../adapters/AdapterRegistry';
-import { ASTScanner } from '../stages/ASTScanner';
-import { TaxEngine } from '../stages/TaxEngine';
 import { ReportCache } from '../cache/ReportCache';
-import type { DeptaxReport, ScoredPackage } from '../types/index';
+import { STATUS_ORDER } from '../model/Classifier';
+import { listProjectFiles } from '../stages/ProjectFiles';
+import { evaluateEcosystem } from '../stages/TaxEngine';
+import type { DeptaxReport, Ecosystem, PackageStatus, ScoredPackage } from '../types/index';
 
 export class ScanOrchestrator {
-  private readonly taxEngine = new TaxEngine();
   private readonly cache = new ReportCache();
 
   constructor(private readonly wasmDir: string) {}
 
   async run(workspaceRoot: string): Promise<DeptaxReport> {
     const adapters = await detectAdapters(workspaceRoot, this.wasmDir);
-
-    if (adapters.length === 0) {
-      const report: DeptaxReport = {
-        projectName: path.basename(workspaceRoot),
-        ecosystem: 'npm',
-        scannedFiles: 0,
-        totalPackagesAudited: 0,
-        parasiticPackagesCount: 0,
-        packages: [],
-        generatedAt: new Date().toISOString(),
-      };
-      await this.cache.write(report, workspaceRoot);
-      return report;
-    }
-
-    const allPackages: ScoredPackage[] = [];
-    let totalScannedFiles = 0;
+    const packages: ScoredPackage[] = [];
+    const warnings: string[] = [];
+    const ecosystems: Ecosystem[] = [];
+    const scanned = new Set<string>();
+    let installed = 0;
+    let shared = 0;
 
     for (const adapter of adapters) {
       try {
-        // Stage 1: parse manifest
-        const deps = await adapter.parseManifest(workspaceRoot);
-
-        // Stage 2: inspect all packages in parallel
-        const footprints = await Promise.all(
-          deps.map((dep) => adapter.inspectPackage(workspaceRoot, dep)),
-        );
-
-        // Stage 3: AST scan — pass footprints so bare wildcard imports can be
-        // resolved by scanning file text for known exported identifiers.
-        const scanner = new ASTScanner(this.wasmDir);
-        await scanner.initialize();
-        const usageMap = await scanner.scanWorkspace(workspaceRoot, adapter, footprints);
-
-        // Count scanned files (glob the same patterns used by the scanner)
-        // We track it via the usageMap — each UsedSymbol contains file paths.
-        const fileSet = new Set<string>();
-        for (const usage of usageMap.values()) {
-          for (const sym of usage.usedSymbols) {
-            for (const f of sym.files) {
-              fileSet.add(f);
-            }
-          }
-        }
-        totalScannedFiles += fileSet.size;
-
-        // Stage 4: score every package
-        for (let i = 0; i < deps.length; i++) {
-          const dep = deps[i];
-          const footprint = footprints[i];
-          const usage = usageMap.get(dep.name);
-          allPackages.push(this.taxEngine.score(footprint, usage, dep));
-        }
+        const sourceFiles = await listProjectFiles(workspaceRoot, (f) => adapter.isSourceFile(f), adapter.manifestFiles);
+        const model = await adapter.load(workspaceRoot, sourceFiles);
+        const result = await evaluateEcosystem(model, workspaceRoot);
+        packages.push(...result.packages);
+        warnings.push(...result.warnings);
+        installed += result.installedDiskBytes;
+        shared += result.sharedDiskBytes;
+        for (const f of sourceFiles) { scanned.add(f); }
+        ecosystems.push(adapter.ecosystem);
       } catch (err) {
+        warnings.push(`${adapter.ecosystem}: scan failed — ${(err as Error).message}`);
         console.error(`[DepTax] Error processing adapter "${adapter.ecosystem}":`, err);
       }
     }
 
-    // Sort by deptaxScore descending
-    allPackages.sort((a, b) => b.deptaxScore - a.deptaxScore);
-
-    const ecosystemValue =
-      adapters.length === 1
-        ? adapters[0].ecosystem
-        : (adapters.map((a) => a.ecosystem).join(',') as DeptaxReport['ecosystem']);
+    packages.sort(comparePackages);
+    const byStatus = Object.fromEntries(STATUS_ORDER.map((s) => [s, 0])) as Record<PackageStatus, number>;
+    for (const p of packages) { byStatus[p.status]++; }
 
     const report: DeptaxReport = {
+      schemaVersion: 2,
       projectName: path.basename(workspaceRoot),
-      ecosystem: ecosystemValue,
-      scannedFiles: totalScannedFiles,
-      totalPackagesAudited: allPackages.length,
-      parasiticPackagesCount: allPackages.filter((p) => p.status === 'parasitic').length,
-      packages: allPackages,
+      ecosystems,
+      scannedFiles: scanned.size,
       generatedAt: new Date().toISOString(),
+      summary: {
+        byStatus,
+        installedDiskBytes: installed,
+        sharedDiskBytes: shared,
+        unusedCodeBytes: packages.reduce((s, p) =>
+          s + (p.metrics.codeBytes !== null && p.metrics.usedCodeBytes !== null
+            ? p.metrics.codeBytes - p.metrics.usedCodeBytes : 0), 0),
+      },
+      packages,
+      warnings,
     };
-
     await this.cache.write(report, workspaceRoot);
     return report;
   }
+}
+
+/** Most severe status first; within a status, the largest waste first. */
+export function comparePackages(a: ScoredPackage, b: ScoredPackage): number {
+  const byStatus = STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status);
+  if (byStatus !== 0) { return byStatus; }
+  return wasteOf(b) - wasteOf(a) || a.packageName.localeCompare(b.packageName);
+}
+
+function wasteOf(p: ScoredPackage): number {
+  const m = p.metrics;
+  if (m.codeBytes !== null && m.usedCodeBytes !== null) { return m.codeBytes - m.usedCodeBytes; }
+  return m.retainedDiskBytes;
 }

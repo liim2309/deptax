@@ -2,90 +2,73 @@ import * as path from 'path';
 import Parser from 'web-tree-sitter';
 
 /**
- * Shared Tree-sitter parsing helpers.
- *
- * `Parser.init()` must be called before any parsing; `ASTScanner.initialize()`
- * owns that call.  Each `parse*` function loads its grammar WASM lazily on the
- * first call and caches the resulting Language.
+ * Shared Tree-sitter setup. `loadGrammars()` must complete before `parse()` is
+ * called; after that, parsing is synchronous.
  */
 
-let tsLanguage: Parser.Language | null = null;
-let pyLanguage: Parser.Language | null = null;
-let dartLanguage: Parser.Language | null = null;
+export type Grammar = 'typescript' | 'tsx' | 'python';
+export type SyntaxNode = Parser.SyntaxNode;
 
-/** Parse a TypeScript/JavaScript source file and return the syntax tree. */
-export async function parseTypeScript(
-  fileText: string,
-  wasmDir: string,
-): Promise<Parser.Tree> {
-  if (!tsLanguage) {
-    tsLanguage = await Parser.Language.load(
-      path.join(wasmDir, 'tree-sitter-typescript.wasm'),
-    );
+const GRAMMAR_FILES: Record<Grammar, string> = {
+  typescript: 'tree-sitter-typescript.wasm',
+  tsx: 'tree-sitter-tsx.wasm',
+  python: 'tree-sitter-python.wasm',
+};
+
+let initPromise: Promise<void> | null = null;
+const languages = new Map<Grammar, Parser.Language>();
+const parsers = new Map<Grammar, Parser>();
+
+export function loadGrammars(wasmDir: string): Promise<void> {
+  if (!initPromise) {
+    initPromise = (async () => {
+      await Parser.init({ locateFile: (file: string) => path.join(wasmDir, file) });
+      for (const [grammar, file] of Object.entries(GRAMMAR_FILES) as Array<[Grammar, string]>) {
+        languages.set(grammar, await Parser.Language.load(path.join(wasmDir, file)));
+      }
+    })();
+    initPromise.catch(() => { initPromise = null; });
   }
-  const parser = new Parser();
-  parser.setLanguage(tsLanguage);
-  const tree = parser.parse(fileText);
-  parser.delete();
-  return tree;
+  return initPromise;
 }
 
-/** Parse a Python source file and return the syntax tree. */
-export async function parsePython(
-  fileText: string,
-  wasmDir: string,
-): Promise<Parser.Tree> {
-  if (!pyLanguage) {
-    pyLanguage = await Parser.Language.load(
-      path.join(wasmDir, 'tree-sitter-python.wasm'),
-    );
+/** Parse source text. The caller must `delete()` the returned tree. */
+export function parse(grammar: Grammar, text: string): Parser.Tree {
+  let parser = parsers.get(grammar);
+  if (!parser) {
+    const language = languages.get(grammar);
+    if (!language) { throw new Error(`Tree-sitter grammar "${grammar}" is not loaded`); }
+    parser = new Parser();
+    parser.setLanguage(language);
+    parsers.set(grammar, parser);
   }
-  const parser = new Parser();
-  parser.setLanguage(pyLanguage);
-  const tree = parser.parse(fileText);
-  parser.delete();
-  return tree;
+  return parser.parse(text);
 }
 
-/**
- * Parse a Dart source file and return the syntax tree.
- * Falls back to a stub (empty rootNode children) if the WASM is unavailable.
- */
-export async function parseDart(
-  fileText: string,
-  wasmDir: string,
-): Promise<Parser.Tree> {
-  if (!dartLanguage) {
-    dartLanguage = await Parser.Language.load(
-      path.join(wasmDir, 'tree-sitter-dart.wasm'),
-    );
-  }
-  const parser = new Parser();
-  parser.setLanguage(dartLanguage);
-  const tree = parser.parse(fileText);
-  parser.delete();
-  return tree;
+/** Grammar for a JavaScript-family file. `.ts` uses the TypeScript grammar because `<T>x` casts are not valid TSX. */
+export function jsGrammarFor(filePath: string): Grammar {
+  const ext = path.extname(filePath).toLowerCase();
+  return ext === '.ts' || ext === '.mts' || ext === '.cts' ? 'typescript' : 'tsx';
 }
 
-/**
- * Walk all descendants of `node` and collect every node whose `type` is in
- * `targetTypes`.  Returns a flat list.
- */
-export function collectNodes(
-  node: Parser.SyntaxNode,
-  targetTypes: ReadonlySet<string>,
-): Parser.SyntaxNode[] {
-  const results: Parser.SyntaxNode[] = [];
-  const stack: Parser.SyntaxNode[] = [node];
-  while (stack.length > 0) {
-    const current = stack.pop()!;
-    if (targetTypes.has(current.type)) {
-      results.push(current);
-    }
-    for (let i = current.childCount - 1; i >= 0; i--) {
-      const child = current.child(i);
-      if (child) { stack.push(child); }
-    }
+/** Unquoted value of a string literal node without interpolation, or null. */
+export function stringLiteralValue(node: SyntaxNode | null | undefined): string | null {
+  if (!node) { return null; }
+  if (node.type === 'string') {
+    return node.text.slice(1, -1);
   }
-  return results;
+  if (node.type === 'template_string') {
+    if (node.namedChildren.some((c) => c.type === 'template_substitution')) { return null; }
+    return node.text.slice(1, -1);
+  }
+  return null;
+}
+
+/** True when an unnamed child token of `node` has the given text (e.g. `type`, `default`). */
+export function hasToken(node: SyntaxNode, token: string): boolean {
+  for (let i = 0; i < node.childCount; i++) {
+    const c = node.child(i);
+    if (c && !c.isNamed && c.type === token) { return true; }
+  }
+  return false;
 }

@@ -1,5 +1,7 @@
 # Technical Specification: DepTax (Third-Party Dependency Weight Auditor & Native Inliner)
 
+> **Superseded:** the scoring model (Φ, U, DepTax Score) and the pipeline details in this document were replaced by model v2. See `DEPTAX_FULL_SPEC.md` §2–§4 and §15.
+
 ## Document Metadata
 * **Status:** Final System Architecture & Implementation Blueprint
 * **Target Ecosystems:** Node.js / TypeScript (npm, pnpm, yarn), Dart / Flutter (pub), Python (pip, poetry)

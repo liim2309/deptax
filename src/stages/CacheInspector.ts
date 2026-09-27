@@ -2,28 +2,46 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 /**
- * Recursively computes total size in KB and file count for a directory.
- * Returns zeros gracefully if the path does not exist (ENOENT).
+ * Stage 2 helper: list the files under a package directory with their sizes.
+ * Directories named in `skipDirs` (such as nested `node_modules`, which hold
+ * other packages) are not entered, and symbolic links are not followed.
  */
-export async function computeDirSize(dirPath: string): Promise<{ sizeKb: number; fileCount: number }> {
-  try {
-    const entries = await fs.promises.readdir(dirPath, { recursive: true, withFileTypes: true });
-    let totalBytes = 0;
-    let fileCount = 0;
-    for (const entry of entries) {
-      if (!entry.isFile()) { continue; }
-      const filePath = path.join(entry.parentPath ?? (entry as unknown as { path: string }).path ?? dirPath, entry.name);
-      const stat = await fs.promises.stat(filePath).catch(() => null);
-      if (stat) {
-        totalBytes += stat.size;
-        fileCount++;
+export async function listFiles(
+  dir: string,
+  skipDirs: ReadonlySet<string> = new Set(),
+): Promise<Map<string, number>> {
+  const files = new Map<string, number>();
+  const pending: string[] = [dir];
+  while (pending.length > 0) {
+    const batch = pending.splice(0, 32);
+    await Promise.all(batch.map(async (d) => {
+      let entries: fs.Dirent[];
+      try {
+        entries = await fs.promises.readdir(d, { withFileTypes: true });
+      } catch {
+        return;
       }
-    }
-    return { sizeKb: totalBytes / 1024, fileCount };
-  } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      return { sizeKb: 0, fileCount: 0 };
-    }
-    throw err;
+      const sizes = await Promise.all(entries.map(async (e) => {
+        const full = path.join(d, e.name);
+        if (e.isDirectory()) {
+          if (!skipDirs.has(e.name)) { pending.push(full); }
+          return null;
+        }
+        if (!e.isFile()) { return null; }
+        try {
+          return [full, (await fs.promises.stat(full)).size] as const;
+        } catch {
+          return null;
+        }
+      }));
+      for (const s of sizes) { if (s) { files.set(s[0], s[1]); } }
+    }));
   }
+  return files;
+}
+
+export function sumSizes(files: ReadonlyMap<string, number>): number {
+  let total = 0;
+  for (const size of files.values()) { total += size; }
+  return total;
 }

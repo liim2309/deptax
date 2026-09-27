@@ -10,17 +10,21 @@ import { DeptaxStatusBarItem } from './ui/StatusBarItem';
 // Known manifest filenames that should trigger a re-scan when saved
 const MANIFEST_BASENAMES = new Set([
   'package.json',
+  'package-lock.json',
+  'pnpm-lock.yaml',
+  'yarn.lock',
   'pubspec.yaml',
+  'pubspec.lock',
   'requirements.txt',
   'pyproject.toml',
-  'pubspec.lock',
   'poetry.lock',
+  'uv.lock',
+  'Pipfile',
   'Pipfile.lock',
-  'pnpm-lock.yaml',
 ]);
 
 // Source file extensions that should trigger a re-scan when saved
-const SOURCE_EXTENSIONS = new Set(['.ts', '.js', '.tsx', '.jsx', '.dart', '.py']);
+const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs', '.dart', '.py']);
 
 export function activate(context: vscode.ExtensionContext): void {
   const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -34,7 +38,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // UI providers
   const diagnosticsProvider = new DiagnosticsProvider();
-  const treeView = new DeptaxTreeView();
+  const treeView = new DeptaxTreeView(workspaceRoot);
   const statusBarItem = new DeptaxStatusBarItem();
 
   const treeViewRegistration = vscode.window.createTreeView('deptaxView', {
@@ -49,11 +53,11 @@ export function activate(context: vscode.ExtensionContext): void {
       async () => {
         try {
           lastReport = await orchestrator.run(workspaceRoot!);
-          console.log('[DepTax] Scan complete:', JSON.stringify(lastReport, null, 2));
 
           await diagnosticsProvider.update(lastReport, workspaceRoot!);
           treeView.refresh(lastReport);
           statusBarItem.update(lastReport);
+          ReportWebViewPanel.currentPanel?.update(lastReport);
         } catch (err) {
           console.error('[DepTax] Scan failed:', err);
         }
@@ -67,7 +71,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // Open report command
   const reportCmd = vscode.commands.registerCommand('deptax.openReport', () => {
     if (lastReport) {
-      ReportWebViewPanel.createOrShow(context.extensionUri, lastReport);
+      ReportWebViewPanel.createOrShow(lastReport);
     } else {
       vscode.window.showInformationMessage('DepTax: No report available yet — run a scan first.');
     }
