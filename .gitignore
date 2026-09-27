@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.deptax/
+deptax_report.json
+
+# macOS
+.DS_Store
+
+# VSCode local settings
+.vscode/settings.json
+.vscode/launch.json
+
+# TypeScript build cache
+*.tsbuildinfo

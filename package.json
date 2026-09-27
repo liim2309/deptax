@@ -1,0 +1,75 @@
+{
+  "name": "deptax",
+  "displayName": "DepTax",
+  "description": "Audits third-party dependencies across Node.js/TypeScript, Flutter/Dart, and Python projects.",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "workspaceContains:package.json",
+    "workspaceContains:pubspec.yaml",
+    "workspaceContains:requirements.txt",
+    "onLanguage:typescript",
+    "onLanguage:javascript",
+    "onLanguage:dart",
+    "onLanguage:python"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "deptaxContainer",
+          "title": "DepTax",
+          "icon": "$(bug)"
+        }
+      ]
+    },
+    "views": {
+      "deptaxContainer": [
+        {
+          "id": "deptaxView",
+          "name": "DepTax",
+          "icon": "$(bug)",
+          "contextualTitle": "DepTax"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "deptax.scan",
+        "title": "DepTax: Scan Workspace"
+      },
+      {
+        "command": "deptax.openReport",
+        "title": "DepTax: Open Report"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc --noEmit && node esbuild.js",
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "test": "npx ts-node --project tsconfig.test.json test/smoke.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.20.0",
+    "tree-sitter-dart": "^1.0.0",
+    "tree-sitter-python": "^0.25.0",
+    "tree-sitter-typescript": "^0.23.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "web-tree-sitter": "^0.22.0"
+  },
+  "allowScripts": {
+    "esbuild@0.20.2": true
+  }
+}
